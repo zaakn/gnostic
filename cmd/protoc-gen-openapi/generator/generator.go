@@ -547,11 +547,60 @@ func (g *OpenAPIv3Generator) buildOperationV3(
 
 	// Add any unhandled fields in the request message as query parameters.
 	if bodyField != "*" && string(inputMessage.Desc.FullName()) != "google.api.HttpBody" {
+		sOpts := proto.GetExtension(inputMessage.Desc.Options(), v3.E_Schema).(*v3.Schema)
+
 		for _, field := range inputMessage.Fields {
 			fieldName := string(field.Desc.Name())
+			var fieldParams []*v3.ParameterOrReference
 			if !contains(coveredParameters, fieldName) && fieldName != bodyField {
-				fieldParams := g.buildQueryParamsV3(field)
+				fieldParams = g.buildQueryParamsV3(field)
 				parameters = append(parameters, fieldParams...)
+			} else {
+				for _, fp := range parameters {
+					if fp.GetParameter().GetName() == fieldName {
+						fieldParams = append(fieldParams, fp)
+					}
+				}
+			}
+
+			pOpts := proto.GetExtension(field.Desc.Options(), v3.E_Property).(*v3.Schema)
+			for _, pOrRef := range fieldParams {
+				p := pOrRef.GetParameter()
+				if p == nil {
+					continue
+				}
+
+				// required (combine options in schema level and property level)
+				requiredFields := append(sOpts.GetRequired(), pOpts.GetRequired()...)
+				if len(requiredFields) > 0 {
+					if contains(requiredFields, p.Name) {
+						p.Required = true
+					}
+				}
+
+				if pOpts == nil {
+					continue
+				}
+
+				// description
+				if pOpts.Description != "" {
+					p.Description = pOpts.Description
+				}
+
+				// deprecated
+				if pOpts.Deprecated {
+					p.Deprecated = true
+				}
+
+				// schema
+				s := p.Schema.GetSchema()
+				if s == nil {
+					s = &v3.Schema{}
+					p.Schema = &v3.SchemaOrReference{
+						Oneof: &v3.SchemaOrReference_Schema{Schema: s},
+					}
+				}
+				proto.Merge(s, pOpts)
 			}
 		}
 	}
